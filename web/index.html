@@ -1,0 +1,224 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>LLM Agentic Runtime</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #111315;
+      --panel: #1a1d20;
+      --panel-strong: #22272b;
+      --line: #343a40;
+      --text: #edf0f2;
+      --muted: #9da6ad;
+      --accent: #65c18c;
+      --accent-strong: #3fa56d;
+      --danger: #e38b8b;
+    }
+
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-width: 320px;
+      background: var(--bg);
+      color: var(--text);
+      font: 15px/1.5 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    button, textarea { font: inherit; }
+    button { cursor: pointer; }
+    .shell { max-width: 1080px; min-height: 100vh; margin: 0 auto; padding: 28px 20px 36px; }
+    header { display: flex; justify-content: space-between; gap: 20px; align-items: flex-start; border-bottom: 1px solid var(--line); padding-bottom: 18px; }
+    h1 { margin: 0; font-size: 24px; letter-spacing: 0; }
+    .subtitle { margin: 4px 0 0; color: var(--muted); }
+    .status { display: inline-flex; align-items: center; gap: 8px; color: var(--muted); white-space: nowrap; }
+    .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--muted); }
+    .dot.ready { background: var(--accent); }
+    .dot.error { background: var(--danger); }
+    main { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 20px; padding-top: 22px; }
+    .workspace, aside { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; }
+    .workspace { min-height: 620px; display: flex; flex-direction: column; }
+    .toolbar { display: flex; justify-content: space-between; gap: 12px; align-items: center; padding: 14px 16px; border-bottom: 1px solid var(--line); }
+    .segmented { display: inline-flex; border: 1px solid var(--line); border-radius: 5px; overflow: hidden; }
+    .segmented button { min-height: 34px; border: 0; border-right: 1px solid var(--line); background: transparent; color: var(--muted); padding: 0 14px; }
+    .segmented button:last-child { border-right: 0; }
+    .segmented button.active { background: var(--panel-strong); color: var(--text); }
+    .toolbar button.secondary { min-height: 34px; border: 1px solid var(--line); border-radius: 5px; background: transparent; color: var(--muted); padding: 0 12px; }
+    #conversation { flex: 1; overflow: auto; padding: 18px 16px; }
+    .empty { min-height: 420px; display: grid; place-items: center; color: var(--muted); text-align: center; }
+    .message { max-width: 86%; margin: 0 0 16px; }
+    .message.user { margin-left: auto; }
+    .message .role { color: var(--muted); font-size: 12px; margin-bottom: 4px; }
+    .message .body { white-space: pre-wrap; overflow-wrap: anywhere; background: var(--panel-strong); border: 1px solid var(--line); border-radius: 5px; padding: 11px 12px; }
+    .message.user .body { border-color: #3d624d; }
+    .composer { border-top: 1px solid var(--line); padding: 14px 16px 16px; }
+    textarea { width: 100%; min-height: 96px; resize: vertical; border: 1px solid var(--line); border-radius: 5px; background: #101214; color: var(--text); padding: 11px 12px; outline: none; }
+    textarea:focus { border-color: var(--accent-strong); }
+    .composer-row { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-top: 10px; }
+    .hint { color: var(--muted); font-size: 12px; }
+    .send { min-height: 38px; border: 0; border-radius: 5px; background: var(--accent); color: #0d1a12; font-weight: 700; padding: 0 18px; }
+    .send:hover { background: #79d49d; }
+    .send:disabled { cursor: wait; opacity: 0.6; }
+    aside { padding: 16px; align-self: start; }
+    aside h2 { margin: 0 0 14px; font-size: 15px; }
+    .metric { display: flex; justify-content: space-between; gap: 12px; border-top: 1px solid var(--line); padding: 11px 0; }
+    .metric span:first-child { color: var(--muted); }
+    .metric span:last-child { max-width: 170px; text-align: right; overflow-wrap: anywhere; }
+    .trace { margin-top: 16px; border-top: 1px solid var(--line); padding-top: 14px; }
+    .trace pre { max-height: 260px; overflow: auto; margin: 8px 0 0; color: var(--muted); font: 12px/1.45 ui-monospace, SFMono-Regular, Consolas, monospace; white-space: pre-wrap; }
+    .error { color: var(--danger); }
+    @media (max-width: 760px) {
+      .shell { padding: 18px 12px 24px; }
+      header { display: block; }
+      .status { margin-top: 10px; }
+      main { grid-template-columns: 1fr; }
+      .workspace { min-height: 560px; }
+      .message { max-width: 94%; }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <header>
+      <div>
+        <h1>LLM Agentic Runtime</h1>
+        <p class="subtitle">Transformers serving with tool execution and trace inspection</p>
+      </div>
+      <div class="status"><span id="status-dot" class="dot"></span><span id="status-text">Checking API</span></div>
+    </header>
+
+    <main>
+      <section class="workspace" aria-label="Chat workspace">
+        <div class="toolbar">
+          <div class="segmented" role="tablist" aria-label="Runtime mode">
+            <button id="chat-mode" class="active" type="button" role="tab" aria-selected="true">Chat</button>
+            <button id="agent-mode" type="button" role="tab" aria-selected="false">Agent</button>
+          </div>
+          <button id="clear-button" class="secondary" type="button">Clear</button>
+        </div>
+        <div id="conversation" aria-live="polite">
+          <div id="empty-state" class="empty">Send a message to test the loaded model.</div>
+        </div>
+        <form id="composer" class="composer">
+          <textarea id="prompt" placeholder="Ask a question or try: calculate 125 * 36" required></textarea>
+          <div class="composer-row">
+            <span id="hint" class="hint">Chat mode returns the model response.</span>
+            <button id="send-button" class="send" type="submit">Send</button>
+          </div>
+        </form>
+      </section>
+
+      <aside>
+        <h2>Runtime status</h2>
+        <div class="metric"><span>Backend</span><span id="backend">-</span></div>
+        <div class="metric"><span>Model</span><span id="model">-</span></div>
+        <div class="metric"><span>Adapter</span><span id="adapter">-</span></div>
+        <div class="metric"><span>Max steps</span><span id="max-steps">-</span></div>
+        <div id="trace-panel" class="trace" hidden>
+          <strong>Agent trace</strong>
+          <pre id="trace"></pre>
+        </div>
+      </aside>
+    </main>
+  </div>
+
+  <script>
+    const state = { mode: "chat", messages: [] };
+    const $ = (id) => document.getElementById(id);
+
+    function addMessage(role, content) {
+      $("empty-state").hidden = true;
+      const item = document.createElement("article");
+      item.className = `message ${role}`;
+      const label = document.createElement("div");
+      label.className = "role";
+      label.textContent = role === "user" ? "You" : "Assistant";
+      const body = document.createElement("div");
+      body.className = "body";
+      body.textContent = content;
+      item.append(label, body);
+      $("conversation").appendChild(item);
+      $("conversation").scrollTop = $("conversation").scrollHeight;
+    }
+
+    function setMode(mode) {
+      state.mode = mode;
+      $("chat-mode").classList.toggle("active", mode === "chat");
+      $("agent-mode").classList.toggle("active", mode === "agent");
+      $("chat-mode").setAttribute("aria-selected", mode === "chat");
+      $("agent-mode").setAttribute("aria-selected", mode === "agent");
+      $("hint").textContent = mode === "chat"
+        ? "Chat mode returns the model response."
+        : "Agent mode may execute registered tools and returns a trace.";
+    }
+
+    async function refreshHealth() {
+      try {
+        const response = await fetch("/health");
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const data = await response.json();
+        $("status-dot").className = "dot ready";
+        $("status-text").textContent = "API ready";
+        $("backend").textContent = data.backend || "-";
+        $("model").textContent = data.model_path || "-";
+        $("adapter").textContent = data.adapter_path || "none";
+        $("max-steps").textContent = data.max_steps ?? "-";
+      } catch (error) {
+        $("status-dot").className = "dot error";
+        $("status-text").textContent = "API unavailable";
+      }
+    }
+
+    $("chat-mode").addEventListener("click", () => setMode("chat"));
+    $("agent-mode").addEventListener("click", () => setMode("agent"));
+    $("clear-button").addEventListener("click", () => {
+      state.messages = [];
+      $("conversation").innerHTML = "";
+      const empty = document.createElement("div");
+      empty.id = "empty-state";
+      empty.className = "empty";
+      empty.textContent = "Send a message to test the loaded model.";
+      $("conversation").appendChild(empty);
+      $("trace-panel").hidden = true;
+    });
+
+    $("composer").addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const prompt = $("prompt").value.trim();
+      if (!prompt) return;
+      const send = $("send-button");
+      send.disabled = true;
+      addMessage("user", prompt);
+      state.messages.push({ role: "user", content: prompt });
+      $("prompt").value = "";
+      try {
+        const endpoint = state.mode === "chat" ? "/v1/chat/completions" : "/v1/agent/run";
+        const response = await fetch(endpoint, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ messages: state.messages })
+        });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.detail || `HTTP ${response.status}`);
+        const answer = state.mode === "chat"
+          ? data.choices[0].message.content
+          : (data.final_answer || data.error || "No final answer");
+        addMessage("assistant", answer);
+        state.messages.push({ role: "assistant", content: answer });
+        if (state.mode === "agent") {
+          $("trace-panel").hidden = false;
+          $("trace").textContent = JSON.stringify(data.trace, null, 2);
+        }
+      } catch (error) {
+        addMessage("assistant", `Request failed: ${error.message}`);
+      } finally {
+        send.disabled = false;
+        $("prompt").focus();
+      }
+    });
+
+    refreshHealth();
+  </script>
+</body>
+</html>
