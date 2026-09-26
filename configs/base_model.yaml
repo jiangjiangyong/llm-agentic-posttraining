@@ -1,0 +1,15 @@
+model:
+  repo_id: Qwen/Qwen3-1.7B-Base
+  local_path: models/base/Qwen3-1.7B-Base
+  device_map: auto
+
+inference:
+  max_new_tokens: 128
+  do_sample: false
+  seed: 42
+
+evaluation:
+  dataset_path: data/evaluation/base_smoke.jsonl
+  predictions_path: outputs/baseline/predictions.jsonl
+  metrics_path: outputs/baseline/metrics.json
+  manifest_path: artifacts/eval_manifest.json

@@ -1,0 +1,12 @@
+model_config: configs/base_model.yaml
+
+runtime:
+  max_steps: 3
+  observation_role: tool
+
+evaluation:
+  dataset_path: data/evaluation/tool_calling_smoke.jsonl
+  output_dirs:
+    model: outputs/tool_baseline
+    adapter: outputs/sft_eval/tool_calling
+    scripted: outputs/tool_runtime_smoke
