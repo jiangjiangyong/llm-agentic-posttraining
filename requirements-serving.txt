@@ -1,0 +1,10 @@
+# Serving dependencies for the current CUDA/Torch environment.
+# Install the matching CUDA build of torch separately when creating a new environment.
+transformers==4.51.3
+accelerate==1.5.2
+fastapi==0.141.1
+uvicorn==0.53.0
+pydantic==2.13.5
+httpx==0.27.2
+peft==0.15.2
+bitsandbytes==0.45.5
