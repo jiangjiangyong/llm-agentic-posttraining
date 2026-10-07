@@ -144,3 +144,101 @@ def test_code_environment_drops_unknown_suffix_actions() -> None:
 
     assert result.semantic_success is True
     assert [call["name"] for call in result.tool_calls] == ["python_executor"]
+
+
+def test_code_environment_materializes_content_ref_from_verified_observation() -> None:
+    generator = SequenceGenerator(
+        [
+            (
+                '<tool_call>{"name":"mock_search","arguments":'
+                '{"query":"python executor timeout policy","top_k":1}}'
+                "</tool_call>"
+            ),
+            (
+                '<tool_call>{"name":"write_file","arguments":'
+                '{"path":"research/note.md","content_ref":"result_snippet",'
+                '"marker_ref":"context_packet"}}</tool_call>'
+            ),
+            (
+                '<tool_call>{"name":"read_file","arguments":'
+                '{"path":"research/note.md"}}</tool_call>'
+            ),
+            "READY",
+        ]
+    )
+    task = {
+        "id": "content_ref_runtime_test",
+        "messages": [
+            {
+                "role": "user",
+                "content": (
+                    "Search the policy, write it to a file, read it back, and report "
+                    "completion. Context packet RUNTIME42: cedar, river, quartz."
+                ),
+            }
+        ],
+        "expected": {
+            "required_tools": ["mock_search", "write_file", "read_file"],
+            "expected_tool_calls": 3,
+            "expected_arguments": {
+                "mock_search": {"query": "python executor timeout policy"},
+                "write_file": {"path": "research/note.md"},
+                "read_file": {"path": "research/note.md"},
+            },
+            "execution_tools": ["mock_search", "write_file", "read_file"],
+            "file_checks": [
+                {
+                    "path": "research/note.md",
+                    "contains": ["three second timeout", "Case marker: RUNTIME42"],
+                }
+            ],
+            "final_answer_contains": ["READY"],
+        },
+    }
+
+    result = CodeAgentEnvironment(max_steps=5).run(task, generator)
+
+    assert result.semantic_success is True
+    assert result.strict_success is True
+    assert result.workspace_files == ["research/note.md"]
+    assert result.steps[1]["tool_calls"][0]["arguments"]["content_ref"] == (
+        "result_snippet"
+    )
+    resolved = result.steps[1]["resolved_tool_calls"][0]
+    assert resolved["arguments"]["content"].startswith("Python tasks run")
+    assert result.steps[1]["content_ref_resolutions"][0]["applied"] is True
+
+
+def test_content_ref_without_verified_observation_fails_closed() -> None:
+    generator = SequenceGenerator(
+        [
+            (
+                '<tool_call>{"name":"write_file","arguments":'
+                '{"path":"research/note.md","content_ref":"result_snippet",'
+                '"marker_ref":"context_packet"}}</tool_call>'
+            ),
+            "NOT READY",
+        ]
+    )
+    task = {
+        "id": "content_ref_fail_closed_test",
+        "messages": [
+            {"role": "user", "content": "Context packet SAFE1: cedar, river."}
+        ],
+        "expected": {
+            "required_tools": ["write_file"],
+            "execution_tools": ["write_file"],
+            "file_checks": [
+                {"path": "research/note.md", "contains": ["three second"]}
+            ],
+            "final_answer_contains": ["READY"],
+        },
+    }
+
+    result = CodeAgentEnvironment(max_steps=2).run(task, generator)
+
+    assert result.semantic_success is False
+    assert result.workspace_files == []
+    resolution = result.steps[0]["content_ref_resolutions"][0]
+    assert resolution["applied"] is False
+    assert "missing_verified_search_snippet" in resolution["reason"]

@@ -6,6 +6,11 @@ import json
 from pathlib import Path
 from typing import Any
 
+try:
+    from scripts.data_access_policy import assert_no_final_test_input
+except ModuleNotFoundError:
+    from data_access_policy import assert_no_final_test_input
+
 
 def read_jsonl(path: str | Path) -> list[dict[str, Any]]:
     return [
@@ -99,6 +104,8 @@ def main() -> int:
     parser.add_argument("--train-output", default="data/code_agent_preference/train.jsonl")
     parser.add_argument("--valid-output", default="data/code_agent_preference/valid.jsonl")
     args = parser.parse_args()
+    assert_no_final_test_input(args.input, "Code Agent preference construction")
+    assert_no_final_test_input(args.valid_input, "Code Agent preference validation source")
 
     source = read_jsonl(args.input) + read_jsonl(args.valid_input)
     pairs = [make_pair(record) for record in source]

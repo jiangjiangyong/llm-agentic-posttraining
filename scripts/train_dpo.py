@@ -16,6 +16,10 @@ from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
 from llm_posttrain.config import load_yaml
 from llm_posttrain.models.loader import model_input_device
 from llm_posttrain.training.dpo import DPOCollator, DPODataset, dpo_loss, sequence_logprob
+try:
+    from scripts.data_access_policy import assert_no_final_test_input
+except ModuleNotFoundError:
+    from data_access_policy import assert_no_final_test_input
 
 
 def read_jsonl(path: str | Path) -> list[dict[str, Any]]:
@@ -192,6 +196,8 @@ def main() -> None:
     parser.add_argument("--no-4bit", action="store_true")
     parser.add_argument("--no-length-normalize", action="store_true")
     args = parser.parse_args()
+    assert_no_final_test_input(args.train_data, "DPO training")
+    assert_no_final_test_input(args.valid_data, "DPO validation")
     if args.batch_size != 1:
         raise ValueError("This memory-safe implementation currently requires --batch-size 1")
     if args.gradient_accumulation_steps < 1:

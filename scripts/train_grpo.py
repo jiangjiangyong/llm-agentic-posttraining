@@ -15,6 +15,10 @@ from llm_posttrain.agent.environment import CalculatorEnvironment
 from llm_posttrain.config import load_yaml
 from llm_posttrain.rl.grpo import group_relative_advantages, sample_completion, trajectory_logprob
 from llm_posttrain.tools.registry import build_default_registry
+try:
+    from scripts.data_access_policy import assert_no_final_test_input
+except ModuleNotFoundError:
+    from data_access_policy import assert_no_final_test_input
 
 
 def read_jsonl(path: str | Path) -> list[dict[str, Any]]:
@@ -289,6 +293,8 @@ def main() -> None:
     parser.add_argument("--rollout-only", action="store_true")
     parser.add_argument("--no-4bit", action="store_true")
     args = parser.parse_args()
+    assert_no_final_test_input(args.train_data, "GRPO training")
+    assert_no_final_test_input(args.valid_data, "GRPO validation")
     if args.num_rollouts < 2:
         raise ValueError("GRPO requires at least two rollouts per prompt")
     if args.gradient_accumulation_groups < 1:

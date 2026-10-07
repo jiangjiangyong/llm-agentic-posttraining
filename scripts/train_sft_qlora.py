@@ -20,6 +20,10 @@ from transformers import (
 )
 
 from llm_posttrain.config import load_yaml
+try:
+    from scripts.data_access_policy import assert_no_final_test_input
+except ModuleNotFoundError:
+    from data_access_policy import assert_no_final_test_input
 
 
 def read_jsonl(path: str | Path) -> list[dict[str, Any]]:
@@ -96,7 +100,10 @@ def tokenize_record(
     )
 
     for index, message in enumerate(messages):
-        if message.get("role") != "assistant":
+        if (
+            message.get("role") != "assistant"
+            or message.get("supervise", True) is False
+        ):
             continue
         assistant_count += 1
         header_start = find_subsequence(full_ids, assistant_header_ids, cursor)
@@ -198,6 +205,7 @@ def build_model(
     use_4bit: bool,
     gradient_checkpointing: bool,
     init_adapter: str | None = None,
+    compute_dtype: torch.dtype = torch.float16,
 ):
     if use_4bit and not torch.cuda.is_available():
         raise RuntimeError("4-bit QLoRA requires CUDA on this server")
@@ -205,7 +213,7 @@ def build_model(
         quantization_config = BitsAndBytesConfig(
             load_in_4bit=True,
             bnb_4bit_quant_type="nf4",
-            bnb_4bit_compute_dtype=torch.float16,
+            bnb_4bit_compute_dtype=compute_dtype,
             bnb_4bit_use_double_quant=True,
         )
         model = AutoModelForCausalLM.from_pretrained(
@@ -321,6 +329,8 @@ def main() -> None:
     parser.add_argument("--max-valid-samples", type=int, default=None)
     parser.add_argument("--no-4bit", action="store_true")
     args = parser.parse_args()
+    assert_no_final_test_input(args.train_data, "SFT training")
+    assert_no_final_test_input(args.valid_data, "SFT validation")
 
     random.seed(args.seed)
     torch.manual_seed(args.seed)

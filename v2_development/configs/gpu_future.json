@@ -1,0 +1,15 @@
+{
+  "status": "deferred_until_gpu_available",
+  "model": {
+    "kind": "peft",
+    "base_model": "<fill-after-v1-freeze>",
+    "adapter": "<fill-after-v1-freeze>",
+    "device": "cuda"
+  },
+  "requirements": [
+    "CUDA and driver verification",
+    "V1 model/data/environment manifests",
+    "fixed generation config",
+    "reproducible benchmark seed"
+  ]
+}

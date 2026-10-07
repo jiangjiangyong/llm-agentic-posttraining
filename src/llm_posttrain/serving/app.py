@@ -8,6 +8,8 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
+from llm_posttrain.agent.code_environment import CodeAgentEnvironment
+from llm_posttrain.agent.protocol_normalizer import ProtocolNormalizingBackend
 from llm_posttrain.agent.runtime import AgentRuntime
 from llm_posttrain.models.loader import GenerationResult
 from llm_posttrain.tools.registry import build_default_registry
@@ -31,6 +33,13 @@ class ChatCompletionRequest(BaseModel):
 
 class AgentRunRequest(ChatCompletionRequest):
     task_id: str | None = None
+    normalize_protocol: bool = False
+
+
+class CodeAgentRunRequest(BaseModel):
+    task: dict[str, Any]
+    task_id: str | None = None
+    normalize_protocol: bool = False
 
 
 def _message_dicts(messages: list[Message]) -> list[dict[str, Any]]:
@@ -57,6 +66,12 @@ def create_app(
             "model_path": model_path,
             "adapter_path": adapter_path,
             "max_steps": max_steps,
+            "capabilities": [
+                "chat_completion",
+                "calculator_agent",
+                "code_agent",
+                "protocol_normalization",
+            ],
         }
 
     @app.get("/", response_class=FileResponse)
@@ -95,8 +110,13 @@ def create_app(
     @app.post("/v1/agent/run")
     def agent_run(request: AgentRunRequest) -> dict[str, Any]:
         messages = _message_dicts(request.messages)
+        backend = (
+            ProtocolNormalizingBackend(runner)
+            if request.normalize_protocol
+            else runner
+        )
         runtime = AgentRuntime(
-            backend=runner,
+            backend=backend,
             registry=build_default_registry(),
             max_steps=max_steps,
         )
@@ -107,7 +127,7 @@ def create_app(
             )
         except Exception as exc:
             raise HTTPException(status_code=500, detail=str(exc)) from exc
-        return {
+        payload = {
             "task_id": result.trace.task_id,
             "success": result.success,
             "final_answer": result.final_answer,
@@ -116,5 +136,48 @@ def create_app(
             "trace": result.trace.to_dict(),
             "backend": backend_name,
         }
+        if isinstance(backend, ProtocolNormalizingBackend):
+            payload["protocol_normalization"] = [
+                item.to_dict() for item in backend.records
+            ]
+        return payload
+
+    @app.post("/v1/code-agent/run")
+    def code_agent_run(request: CodeAgentRunRequest) -> dict[str, Any]:
+        task = dict(request.task)
+        messages = task.get("prompt_messages", task.get("messages"))
+        if not isinstance(messages, list) or not messages:
+            raise HTTPException(
+                status_code=422,
+                detail="task must contain a non-empty prompt_messages or messages list",
+            )
+        backend = (
+            ProtocolNormalizingBackend(runner)
+            if request.normalize_protocol
+            else runner
+        )
+        environment = CodeAgentEnvironment(max_steps=max_steps)
+        try:
+            result = environment.run(
+                task,
+                backend.generate if isinstance(backend, ProtocolNormalizingBackend) else runner.generate,
+                task_id=request.task_id or str(task.get("id", uuid.uuid4().hex)),
+            )
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
+        payload = result.to_dict()
+        payload["final_answer"] = result.final_output
+        payload["trace"] = {
+            "steps": result.steps,
+            "tool_calls": result.tool_calls,
+            "tool_results": result.tool_results,
+            "workspace_files": result.workspace_files,
+        }
+        payload["backend"] = backend_name
+        if isinstance(backend, ProtocolNormalizingBackend):
+            payload["protocol_normalization"] = [
+                item.to_dict() for item in backend.records
+            ]
+        return payload
 
     return app

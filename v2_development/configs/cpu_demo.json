@@ -1,0 +1,13 @@
+{
+  "runtime": {
+    "max_steps": 8,
+    "token_budget": 4096,
+    "checkpoint_on_tool_success": true,
+    "checkpoint_on_recovery": true
+  },
+  "model": {
+    "kind": "mock",
+    "model_name": "cpu-scripted-mock"
+  },
+  "tools": ["calculator", "workspace_set", "workspace_get"]
+}

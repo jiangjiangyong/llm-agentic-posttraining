@@ -10,8 +10,15 @@ from pathlib import Path
 from typing import Any, Callable
 
 from llm_posttrain.agent.protocol import ToolCallParser
+from llm_posttrain.agent.content_resolver import ContentRefResolver
 from llm_posttrain.agent.runtime import AgentRuntime
 from llm_posttrain.agent.trace import AgentTrace
+
+from .research_state import (
+    ResearchProgressTracker,
+    add_state_instruction,
+    append_progress_state,
+)
 from llm_posttrain.rewards.code_agent import (
     CodeAgentReward,
     CodeAgentRewardBreakdown,
@@ -68,13 +75,17 @@ class CodeAgentEnvironment:
         *,
         parser: ToolCallParser | None = None,
         reward: CodeAgentReward | None = None,
+        content_ref_resolver: ContentRefResolver | None = None,
         max_steps: int = 6,
+        progress_state: bool = False,
     ) -> None:
         if max_steps < 1:
             raise ValueError("max_steps must be at least 1")
         self.parser = parser or ToolCallParser()
         self.reward = reward or CodeAgentReward(self.parser)
+        self.content_ref_resolver = content_ref_resolver or ContentRefResolver()
         self.max_steps = max_steps
+        self.progress_state = progress_state
 
     @staticmethod
     def _snapshot_workspace(workspace: Path) -> list[str]:
@@ -115,11 +126,14 @@ class CodeAgentEnvironment:
                 else runtime._prepare_messages(initial_messages)
             )
             working_messages = copy.deepcopy(prepared)
+            state_tracker = ResearchProgressTracker() if self.progress_state else None
+            if state_tracker is not None:
+                working_messages = add_state_instruction(working_messages)
             trace = AgentTrace(
                 run_id=uuid.uuid4().hex,
                 task_id=task_name,
                 initial_messages=copy.deepcopy(initial_messages),
-                prompt_messages=copy.deepcopy(prepared),
+                prompt_messages=copy.deepcopy(working_messages),
             )
             steps: list[dict[str, Any]] = []
             tool_outputs: list[str] = []
@@ -189,8 +203,12 @@ class CodeAgentEnvironment:
                         calls = [parsed.tool_call]
                     call_dicts = [call.to_dict() for call in calls]
                     results: list[dict[str, Any]] = []
+                    resolved_call_dicts: list[dict[str, Any]] = []
+                    resolutions: list[dict[str, Any] | None] = []
                     row["tool_call"] = call_dicts[0]
                     row["tool_calls"] = call_dicts
+                    row["resolved_tool_calls"] = resolved_call_dicts
+                    row["content_ref_resolutions"] = resolutions
                     steps.append(row)
                     tool_outputs.append(raw_output)
                     working_messages.append(
@@ -198,12 +216,31 @@ class CodeAgentEnvironment:
                     )
                     for call in calls:
                         call_dict = call.to_dict()
+                        resolved_call, resolution = self.content_ref_resolver.resolve(
+                            call_dict,
+                            task_messages=initial_messages,
+                            working_messages=working_messages,
+                        )
+                        resolved_call_dicts.append(resolved_call)
+                        resolutions.append(resolution)
+                        if resolution is not None:
+                            trace.add_event(
+                                step=step,
+                                kind="content_ref_resolution",
+                                payload={
+                                    "raw_call": call_dict,
+                                    "resolved_call": resolved_call,
+                                    "metadata": resolution,
+                                },
+                            )
                         result = registry.execute(
-                            call.name,
-                            call.arguments,
+                            str(resolved_call.get("name", call.name)),
+                            resolved_call.get("arguments", call.arguments),
                         ).to_dict()
                         results.append(result)
-                        tool_calls.append(call_dict)
+                        # Reward sees the executable call; the raw model call
+                        # remains in the step and trace for auditability.
+                        tool_calls.append(resolved_call)
                         tool_results.append(result)
                         trace.add_event(
                             step=step,
@@ -215,9 +252,19 @@ class CodeAgentEnvironment:
                             kind="tool_result",
                             payload=result,
                         )
-                        working_messages.append(
-                            runtime._observation_message(call.name, result)
+                        observation_message = runtime._observation_message(
+                            call.name, result
                         )
+                        if state_tracker is not None:
+                            state = state_tracker.update(
+                                str(resolved_call.get("name", call.name)),
+                                result,
+                            )
+                            observation_message["content"] = append_progress_state(
+                                observation_message["content"],
+                                state,
+                            )
+                        working_messages.append(observation_message)
                     row["tool_result"] = results[0]
                     row["tool_results"] = results
                     continue

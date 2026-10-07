@@ -15,6 +15,10 @@ from llm_posttrain.agent.code_environment import CodeAgentEnvironment
 from llm_posttrain.config import load_yaml
 from llm_posttrain.models.adapter_runner import build_adapter_runner
 from llm_posttrain.models.loader import build_runner
+try:
+    from scripts.data_access_policy import assert_final_test_eval_allowed
+except ModuleNotFoundError:
+    from data_access_policy import assert_final_test_eval_allowed
 
 
 def read_jsonl(path: str | Path) -> list[dict[str, Any]]:
@@ -196,7 +200,14 @@ def main() -> int:
     parser.add_argument("--max-new-tokens", type=int, default=128)
     parser.add_argument("--max-steps", type=int, default=5)
     parser.add_argument("--max-samples", type=int, default=None)
+    parser.add_argument(
+        "--allow-final-test-eval",
+        action="store_true",
+        help="Explicitly acknowledge evaluation-only access to final_test.jsonl.",
+    )
     args = parser.parse_args()
+
+    assert_final_test_eval_allowed(args.dataset, args.allow_final_test_eval)
 
     model_config = load_yaml(args.model_config)
     samples = read_jsonl(args.dataset)

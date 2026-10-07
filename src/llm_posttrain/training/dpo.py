@@ -22,6 +22,74 @@ def _chat_token_ids(tokenizer: Any, messages: list[dict[str, Any]], *, add_gener
     return [int(token_id) for token_id in value]
 
 
+def _text_token_ids(tokenizer: Any, text: str) -> list[int]:
+    value = tokenizer(text, add_special_tokens=False)["input_ids"]
+    if hasattr(value, "tolist"):
+        value = value.tolist()
+    if value and isinstance(value[0], list):
+        value = value[0]
+    return [int(token_id) for token_id in value]
+
+
+def _find_subsequence(sequence: list[int], needle: list[int], start: int) -> int:
+    if not needle:
+        raise ValueError("cannot search for an empty token sequence")
+    width = len(needle)
+    for index in range(start, len(sequence) - width + 1):
+        if sequence[index : index + width] == needle:
+            return index
+    return -1
+
+
+def tokenize_prompt_messages(
+    tokenizer: Any,
+    prompt: list[dict[str, Any]],
+    completion_messages: list[dict[str, Any]],
+    *,
+    max_seq_length: int,
+) -> tuple[list[int], list[int], list[int]]:
+    """Tokenize a multi-turn completion while scoring only assistant content."""
+    prompt_ids = _chat_token_ids(tokenizer, prompt, add_generation_prompt=True)
+    full_messages = list(prompt) + list(completion_messages)
+    full_ids = _chat_token_ids(tokenizer, full_messages, add_generation_prompt=False)
+    if full_ids[: len(prompt_ids)] != prompt_ids:
+        raise ValueError("Chat template changed the prompt prefix for trajectory DPO")
+    if len(prompt_ids) >= max_seq_length:
+        raise ValueError("Prompt is too long for max_seq_length; response would be unsupervised")
+    if len(full_ids) > max_seq_length:
+        full_ids = full_ids[:max_seq_length]
+    response_mask = [0] * len(full_ids)
+    assistant_header_ids = _text_token_ids(tokenizer, "<|im_start|>assistant\n")
+    cursor = len(prompt_ids)
+    assistant_count = 0
+    first_completion_assistant = True
+    for message in completion_messages:
+        if message.get("role") != "assistant":
+            continue
+        assistant_count += 1
+        if first_completion_assistant:
+            # add_generation_prompt already emitted this header in prompt_ids.
+            header_start = cursor - len(assistant_header_ids)
+            content_search_start = cursor
+            first_completion_assistant = False
+        else:
+            header_start = _find_subsequence(full_ids, assistant_header_ids, cursor)
+            if header_start < 0:
+                raise ValueError("assistant header not found in trajectory completion")
+            content_search_start = header_start + len(assistant_header_ids)
+        content_ids = _text_token_ids(tokenizer, str(message.get("content", "")))
+        content_start = _find_subsequence(full_ids, content_ids, content_search_start)
+        if content_start < 0:
+            raise ValueError("assistant content not found in trajectory completion")
+        content_end = content_start + len(content_ids)
+        for index in range(max(content_start, len(prompt_ids)), min(content_end, len(full_ids))):
+            response_mask[index] = 1
+        cursor = content_end
+    if assistant_count == 0 or not any(response_mask):
+        raise ValueError("trajectory completion has no supervised assistant content")
+    return full_ids, [1] * len(full_ids), response_mask
+
+
 @dataclass(frozen=True)
 class DPOItem:
     record_id: str
@@ -64,16 +132,30 @@ class DPODataset:
             prompt = record.get("prompt")
             if not isinstance(prompt, list) or not prompt:
                 raise ValueError(f"{record.get('id')}: prompt must be a non-empty message list")
-            chosen = str(record.get("chosen", ""))
-            rejected = str(record.get("rejected", ""))
-            if not chosen.strip() or not rejected.strip():
-                raise ValueError(f"{record.get('id')}: chosen and rejected must be non-empty")
-            chosen_ids, chosen_attention, chosen_mask = tokenize_prompt_completion(
-                tokenizer, prompt, chosen, max_seq_length=max_seq_length
-            )
-            rejected_ids, rejected_attention, rejected_mask = tokenize_prompt_completion(
-                tokenizer, prompt, rejected, max_seq_length=max_seq_length
-            )
+            chosen_messages = record.get("chosen_messages")
+            rejected_messages = record.get("rejected_messages")
+            if chosen_messages is not None or rejected_messages is not None:
+                if not isinstance(chosen_messages, list) or not isinstance(rejected_messages, list):
+                    raise ValueError(
+                        f"{record.get('id')}: trajectory DPO completions must be message lists"
+                    )
+                chosen_ids, chosen_attention, chosen_mask = tokenize_prompt_messages(
+                    tokenizer, prompt, chosen_messages, max_seq_length=max_seq_length
+                )
+                rejected_ids, rejected_attention, rejected_mask = tokenize_prompt_messages(
+                    tokenizer, prompt, rejected_messages, max_seq_length=max_seq_length
+                )
+            else:
+                chosen = str(record.get("chosen", ""))
+                rejected = str(record.get("rejected", ""))
+                if not chosen.strip() or not rejected.strip():
+                    raise ValueError(f"{record.get('id')}: chosen and rejected must be non-empty")
+                chosen_ids, chosen_attention, chosen_mask = tokenize_prompt_completion(
+                    tokenizer, prompt, chosen, max_seq_length=max_seq_length
+                )
+                rejected_ids, rejected_attention, rejected_mask = tokenize_prompt_completion(
+                    tokenizer, prompt, rejected, max_seq_length=max_seq_length
+                )
             self.items.append(
                 DPOItem(
                     record_id=str(record.get("id", len(self.items))),

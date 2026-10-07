@@ -150,7 +150,7 @@
       $("agent-mode").setAttribute("aria-selected", mode === "agent");
       $("hint").textContent = mode === "chat"
         ? "Chat mode returns the model response."
-        : "Agent mode may execute registered tools and returns a trace.";
+        : "Code-Agent mode executes multi-tool tools and returns an auditable trace.";
     }
 
     async function refreshHealth() {
@@ -193,22 +193,30 @@
       state.messages.push({ role: "user", content: prompt });
       $("prompt").value = "";
       try {
-        const endpoint = state.mode === "chat" ? "/v1/chat/completions" : "/v1/agent/run";
+        const isChat = state.mode === "chat";
+        const endpoint = isChat ? "/v1/chat/completions" : "/v1/code-agent/run";
+        const taskId = `web-${Date.now()}`;
+        const requestBody = isChat
+          ? { messages: state.messages }
+          : {
+              task_id: taskId,
+              task: { id: taskId, messages: state.messages },
+            };
         const response = await fetch(endpoint, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ messages: state.messages })
+          body: JSON.stringify(requestBody)
         });
         const data = await response.json();
         if (!response.ok) throw new Error(data.detail || `HTTP ${response.status}`);
-        const answer = state.mode === "chat"
+        const answer = isChat
           ? data.choices[0].message.content
-          : (data.final_answer || data.error || "No final answer");
+          : (data.final_answer || data.final_output || data.error || "No final answer");
         addMessage("assistant", answer);
         state.messages.push({ role: "assistant", content: answer });
-        if (state.mode === "agent") {
+        if (!isChat) {
           $("trace-panel").hidden = false;
-          $("trace").textContent = JSON.stringify(data.trace, null, 2);
+          $("trace").textContent = JSON.stringify(data.trace || data.steps, null, 2);
         }
       } catch (error) {
         addMessage("assistant", `Request failed: ${error.message}`);

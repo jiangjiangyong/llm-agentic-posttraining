@@ -11,6 +11,10 @@ from typing import Any
 
 from llm_posttrain.agent.protocol import ToolCallParser
 from llm_posttrain.tools.registry import ToolRegistry, build_default_registry
+try:
+    from scripts.data_access_policy import assert_no_final_test_input
+except ModuleNotFoundError:
+    from data_access_policy import assert_no_final_test_input
 
 
 TOOL_FAILURES = {
@@ -357,6 +361,11 @@ def main() -> None:
     parser.add_argument("--seed", type=int, default=20260915)
     parser.add_argument("--eval-dataset", action="append", default=None)
     args = parser.parse_args()
+
+    assert_no_final_test_input(args.source, "Failure flywheel rollout source")
+    assert_no_final_test_input(args.task_data, "Failure flywheel task source")
+    for eval_dataset in args.eval_dataset or []:
+        assert_no_final_test_input(eval_dataset, "Failure flywheel evaluation source")
 
     rows = read_jsonl(args.source)
     if not rows:

@@ -19,6 +19,10 @@ from llm_posttrain.rl.grpo import (
     sample_completion,
     trajectory_logprob,
 )
+try:
+    from scripts.data_access_policy import assert_no_final_test_input
+except ModuleNotFoundError:
+    from data_access_policy import assert_no_final_test_input
 
 
 def read_jsonl(path: str | Path) -> list[dict[str, Any]]:
@@ -343,9 +347,12 @@ def main() -> int:
     parser.add_argument("--seed", type=int, default=20260915)
     parser.add_argument("--max-train-tasks", type=int, default=None)
     parser.add_argument("--max-valid-tasks", type=int, default=None)
+    parser.add_argument("--progress-state", action="store_true")
     parser.add_argument("--rollout-only", action="store_true")
     parser.add_argument("--no-4bit", action="store_true")
     args = parser.parse_args()
+    assert_no_final_test_input(args.train_data, "Code Agent GRPO training")
+    assert_no_final_test_input(args.valid_data, "Code Agent GRPO validation")
 
     if args.num_rollouts < 2:
         raise ValueError("num-rollouts must be at least 2")
@@ -377,7 +384,10 @@ def main() -> int:
         args.init_adapter,
         use_4bit=use_4bit,
     )
-    environment = CodeAgentEnvironment(max_steps=args.max_steps)
+    environment = CodeAgentEnvironment(
+        max_steps=args.max_steps,
+        progress_state=args.progress_state,
+    )
     output_dir = Path(args.output_dir)
     rollout_dir = Path(args.rollout_dir)
     history: list[dict[str, Any]] = []
@@ -478,6 +488,7 @@ def main() -> int:
             "num_rollouts": args.num_rollouts,
             "algorithm": "code_agent_group_relative_policy_gradient_without_critic",
             "toolset": "code_agent_v2",
+            "progress_state": args.progress_state,
             "reward_weights": {
                 "format": 0.10,
                 "canonical_format": 0.05,

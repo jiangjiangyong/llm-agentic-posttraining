@@ -64,12 +64,20 @@ class AgentRuntime:
         )
         return (
             "You are running inside Tool Calling Protocol v1.\n"
-            "Available tools are listed below.\n"
+            "Use the calculator when arithmetic is required.\n"
+            "Available tools:\n"
             f"{schema_text}\n"
-            "If a tool is needed, output exactly one block in this form:\n"
+            "When a tool is needed, output exactly one block:\n"
             '<tool_call>{"name":"calculator","arguments":{"expression":"2 + 2"}}</tool_call>\n'
-            "Do not add Markdown fences around a tool call. After the tool observation, "
-            "output the final answer in plain text."
+            "After the tool observation, output the final answer in plain text."
+        )
+
+    @staticmethod
+    def _contains_protocol_instruction(content: str) -> bool:
+        return (
+            "You are running inside Tool Calling Protocol v1." in content
+            and "<tool_call>" in content
+            and "</tool_call>" in content
         )
 
     def _prepare_messages(
@@ -90,7 +98,8 @@ class AgentRuntime:
             prepared.insert(0, {"role": "system", "content": instruction})
         else:
             original = str(prepared[system_index].get("content", "")).rstrip()
-            prepared[system_index]["content"] = f"{original}\n\n{instruction}"
+            if not self._contains_protocol_instruction(original):
+                prepared[system_index]["content"] = f"{original}\n\n{instruction}"
         return prepared
 
     def _observation_message(
